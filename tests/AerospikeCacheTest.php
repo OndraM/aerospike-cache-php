@@ -3,6 +3,9 @@ declare(strict_types=1);
 
 namespace Lmc\AerospikeCache;
 
+use PHPUnit\Framework\MockObject\MockObject;
+use Psr\Log\LoggerInterface;
+
 class AerospikeCacheTest extends AbstractTestCase
 {
     /**
@@ -13,7 +16,7 @@ class AerospikeCacheTest extends AbstractTestCase
         $aerospikeMock = $this->createMock(\Aerospike::class);
         $aerospikeCache = new AerospikeCache($aerospikeMock, 'test', 'cache');
 
-        $aerospikeKey = ['ns' => 'test', 'set' => 'cache', 'key' => 'foo'];
+        $aerospikeKey = $this->createExpectedKey('foo', 'test', 'cache');
         $aerospikeMock->expects($this->once())
             ->method('initKey')
             ->willReturn($aerospikeKey);
@@ -28,28 +31,144 @@ class AerospikeCacheTest extends AbstractTestCase
         $this->assertSame($expectedReturnedValue, $hasItem);
     }
 
-    /**
-     * @dataProvider provideStatusCodes
-     */
-    public function testShouldSaveItem(int $aerospikeStatusCode, bool $expectedSaveSuccessful): void
+    private function createExpectedKey(string $key, string $namespace, string $set): array
     {
+        return ['ns' => $namespace, 'set' => $set, 'key' => $key];
+    }
+
+    /** @dataProvider provideItemsToSave */
+    public function testShouldSaveItems(array $items, array $expectedLogs): void
+    {
+        $aerospikeNamespace = 'test';
+        $aerospikeSetName = 'cache';
+        $lifetime = 42;
+        $expectedPolicy = [\Aerospike::OPT_POLICY_KEY => \Aerospike::POLICY_KEY_SEND];
+
+        $logs = [];
+
+        /** @var \Aerospike|MockObject $aerospikeMock */
         $aerospikeMock = $this->createMock(\Aerospike::class);
-        $aerospikeCache = new AerospikeCache($aerospikeMock, 'test', 'cache');
+        $aerospikeCache = new AerospikeCache($aerospikeMock, $aerospikeNamespace, $aerospikeSetName, '', $lifetime);
 
-        $aerospikeMock->method('put')
-                ->willReturn($aerospikeStatusCode);
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects($this->any())
+            ->method('warning')
+            ->willReturnCallback(function ($message, $context) use (&$logs): void {
+                $logs[] = ['warning' => $message, 'key' => $context['key'] ?? ''];
+            });
+        $aerospikeCache->setLogger($logger);
 
-        $aerospikeMock->method('get')
-                ->willReturn(\Aerospike::OK);
+        $aerospikeMock->expects($this->any())
+            ->method('initKey')
+            ->willReturnCallback(function ($namespace, $set, $key) {
+                return $this->createExpectedKey($key, $namespace, $set);
+            });
 
-        $aerospikeKey = ['ns' => 'test', 'set' => 'cache', 'key' => 'foo'];
-        $aerospikeMock->method('initKey')
-                ->willReturn($aerospikeKey);
+        $counter = 0;
+        $aerospikeMock->expects($this->any())
+            ->method('put')
+            ->willReturnCallback(function (
+                $aerospikeKey,
+                $bins,
+                $ttl,
+                $options
+            ) use (
+                &$counter,
+                $expectedPolicy,
+                $lifetime,
+                $aerospikeSetName,
+                $aerospikeNamespace,
+                $items
+            ) {
+                ['key' => $key, 'value' => $value, 'status' => $status] = $items[$counter++];
 
-        $cacheItem = $aerospikeCache->getItem('foo');
-        $saveSuccessful = $aerospikeCache->save($cacheItem);
+                $expectedKey = $this->createExpectedKey($key, $aerospikeNamespace, $aerospikeSetName);
+                $this->assertSame($expectedKey, $aerospikeKey);
 
-        $this->assertSame($expectedSaveSuccessful, $saveSuccessful);
+                $this->assertSame(['data' => $value], $bins);
+                $this->assertSame($lifetime, $ttl);
+                $this->assertSame($expectedPolicy, $options);
+
+                return $status;
+            });
+
+        foreach ($items as ['key' => $key, 'value' => $value, 'status' => $status]) {
+            $cacheItem = $aerospikeCache->getItem($key);
+            $cacheItem->set($value);
+
+            $expectedResult = $status === \Aerospike::OK;
+            $this->assertSame($expectedResult, $aerospikeCache->save($cacheItem));
+        }
+
+        $this->assertSame($expectedLogs, $logs);
+    }
+
+    public function provideItemsToSave(): array
+    {
+        return [
+            'save successfully no items' => [[], []],
+            'save successfully 1 item' => [
+                [
+                    [
+                        'key' => 'foo',
+                        'value' => 'fooVal',
+                        'status' => \Aerospike::OK,
+                    ],
+                ],
+                [
+                    ['warning' => 'Failed to fetch key "{key}"', 'key' => 'foo'],
+                ],
+            ],
+            'save successfully more items' => [
+                [
+                    [
+                        'key' => 'foo',
+                        'value' => 'fooVal',
+                        'status' => \Aerospike::OK,
+                    ],
+                    [
+                        'key' => 'bar',
+                        'value' => 'barVal',
+                        'status' => \Aerospike::OK,
+                    ],
+                    [
+                        'key' => 'boo',
+                        'value' => 'booVal',
+                        'status' => \Aerospike::OK,
+                    ],
+                ],
+                [
+                    ['warning' => 'Failed to fetch key "{key}"', 'key' => 'foo'],
+                    ['warning' => 'Failed to fetch key "{key}"', 'key' => 'bar'],
+                    ['warning' => 'Failed to fetch key "{key}"', 'key' => 'boo'],
+                ],
+            ],
+            'save items with errors' => [
+                [
+                    [
+                        'key' => 'foo',
+                        'value' => 'fooVal',
+                        'status' => \Aerospike::OK,
+                    ],
+                    [
+                        'key' => 'bar',
+                        'value' => 'barVal',
+                        'status' => \Aerospike::ERR_CLIENT,
+                    ],
+                    [
+                        'key' => 'boo',
+                        'value' => 'booVal',
+                        'status' => \Aerospike::OK,
+                    ],
+                ],
+                [
+                    ['warning' => 'Failed to fetch key "{key}"', 'key' => 'foo'],
+                    ['warning' => 'Failed to fetch key "{key}"', 'key' => 'bar'],
+                    ['warning' => 'Failed to save key "{key}" ({type})', 'key' => 'bar'],
+                    ['warning' => 'Failed to fetch key "{key}"', 'key' => 'boo'],
+                ],
+            ],
+        ];
     }
 
     /**
@@ -71,8 +190,11 @@ class AerospikeCacheTest extends AbstractTestCase
     /**
      * @dataProvider provideStatusCodesForClearingNamespace
      */
-    public function testShouldClearNamespace(int $statusCodeForRemove, int $statusCodeForScan, bool $expectedValue): void
-    {
+    public function testShouldClearNamespace(
+        int $statusCodeForRemove,
+        int $statusCodeForScan,
+        bool $expectedValue
+    ): void {
         $aerospikeMock = $this->createMock(\Aerospike::class);
         $aerospikeCache = new AerospikeCache($aerospikeMock, 'test', 'cache', 'testNamespace');
 
@@ -130,11 +252,13 @@ class AerospikeCacheTest extends AbstractTestCase
     /**
      * @dataProvider doFetchProvider
      */
-    public function testShouldReadExistingRecordsFromAerospike(array $cacheItemKeys, array $valuesReturnedByAerospike): void
-    {
+    public function testShouldReadExistingRecordsFromAerospike(
+        array $cacheItemKeys,
+        array $valuesReturnedByAerospike
+    ): void {
         $mockedAerospikeKeys = array_map(
             function ($key) {
-                return ['ns' => 'aerospike', 'set' => 'cache', 'key' => $key];
+                return $this->createExpectedKey($key, 'aerospike', 'cache');
             },
             $cacheItemKeys
         );
