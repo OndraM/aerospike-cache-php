@@ -105,8 +105,8 @@ class AerospikeCache extends AbstractAdapter
     }
 
     /**
-     * @param int $lifetime
      * @param array<string, mixed> $values
+     * @param int $lifetime
      * @return string[] keys of values that failed during save operation
      */
     protected function doSave(array $values, $lifetime): array
