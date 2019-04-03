@@ -320,16 +320,17 @@ class AerospikeCacheTest extends AbstractTestCase
         $testValue = ['foo' => 'fooValue'];
         $testAerospikeKey = $this->createExpectedKey('foo', 'aerospike', 'cache');
 
-        $this->aerospikeMock->method('initkey')->willReturn($testAerospikeKey);
+        $this->aerospikeMock->method('initkey')
+            ->willReturn($testAerospikeKey);
 
         $this->aerospikeMock->expects($this->once())
             ->method('put')
-            ->with(...)
-            $testAerospikeKey,
-            ['data' => $testValue['foo']],
-            0,
-            [\Aerospike::OPT_POLICY_KEY => \Aerospike::POLICY_KEY_SEND]
-        );
+            ->with(
+                $testAerospikeKey,
+                ['data' => $testValue['foo']],
+                0,
+                [\Aerospike::OPT_POLICY_KEY => \Aerospike::POLICY_KEY_SEND]
+            );
 
         $doSaveMethod->invokeArgs($this->aerospikeCache, [$testValue, 0]);
     }
