@@ -27,8 +27,8 @@ install:
     - chmod +x php-coveralls.phar
 
 before_script:
-    - mkdir -p /usr/local/aerospike/lua
-    - chmod 644 /usr/local/aerospike/lua
+    - sudo mkdir -p /usr/local/aerospike/lua
+    - sudo chmod 644 /usr/local/aerospike/lua
     - cd vendor/aerospike/aerospike-client-php/src/
     - ./build.sh
     - make install
