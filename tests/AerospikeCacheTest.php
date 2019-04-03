@@ -322,7 +322,9 @@ class AerospikeCacheTest extends AbstractTestCase
 
         $this->aerospikeMock->method('initkey')->willReturn($testAerospikeKey);
 
-        $this->aerospikeMock->expects($this->once())->method('put')->with(
+        $this->aerospikeMock->expects($this->once())
+            ->method('put')
+            ->with(...)
             $testAerospikeKey,
             ['data' => $testValue['foo']],
             0,
