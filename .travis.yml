@@ -1,8 +1,7 @@
 language: php
 php:
     - 7.1
-    - 7.2
-    - 7.3
+
 addons:
     apt:
         packages:
@@ -13,12 +12,6 @@ matrix:
     include:
     - php: 7.1
       env: DEPENDENCIES="--prefer-lowest"
-    - php: 7.3
-      env: CHECK_CODESTYLE=1
-      before_install: phpenv config-rm xdebug.ini
-      script:
-      - composer analyze
-      after_success: ~
 
 install:
     - travis_retry composer self-update && composer --version
